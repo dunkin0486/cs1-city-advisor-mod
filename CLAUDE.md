@@ -16,12 +16,15 @@ warnings. See [SPEC.md](SPEC.md) for the full design and
 - **No Harmony patches for diagnostic logic.** Diagnostics read game state
   after the fact; they don't intercept simulation methods. This still
   holds — `MessageManager.QueueMessage` needed no patch to inject a chirp.
-  One patch does exist: `ChirpClickPatch` (`src/ChirpClickPatch.cs`),
-  which Postfixes `ChirpPanel.AddEntry` solely to make the click-to-jump
-  target our finding's location instead of vanilla's Citizen-only default
-  — see SPEC.md "Harmony" for why this one was judged worth it. Don't
-  treat that as license to reach for Harmony elsewhere; each new patch is
-  its own compatibility surface and its own case to make.
+  Two patches exist, both in `src/ChirpClickPatch.cs`: `ChirpClickPatch`
+  Postfixes `ChirpPanel.AddEntry` to make the click-to-jump target our
+  finding's location instead of vanilla's Citizen-only default, and
+  `ChirpClickCameraBoundsPatch` (Prefix + Finalizer on
+  `ChirpPanel.OnTargetClick`) briefly bypasses a vanilla camera-bounds
+  clamp that otherwise silently cancels the jump for far-map findings —
+  see SPEC.md "Harmony" for why each was judged worth it. Don't treat that
+  as license to reach for Harmony elsewhere; each new patch is its own
+  compatibility surface and its own case to make.
 - **Soft dependencies only.** Never add a hard project reference to another
   mod's assembly (e.g. Traffic Flow Overlay). Detect via
   `PluginManager.instance.GetPluginsInfo()` and access its data via

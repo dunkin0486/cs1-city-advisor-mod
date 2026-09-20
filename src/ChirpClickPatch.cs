@@ -1,3 +1,4 @@
+using System;
 using ColossalFramework.UI;
 using HarmonyLib;
 using ICities;
@@ -94,19 +95,28 @@ namespace CityAdvisor
     /// true. Both it and ToolsModifierControl.cameraController are public
     /// fields (confirmed via ILSpy), so this needs no Harmony field
     /// injection -- just toggle it on immediately before vanilla's
-    /// OnTargetClick runs (Prefix) and restore its original value right
-    /// after (Postfix), scoped to only our own message's click so vanilla
-    /// navigation elsewhere keeps its normal bounds behavior.
+    /// OnTargetClick runs and restore its original value right after,
+    /// scoped to only our own message's click so vanilla navigation
+    /// elsewhere keeps its normal bounds behavior.
+    ///
+    /// Uses a Prefix (sets the flag, saves the previous value into a
+    /// per-call `__state`) + Finalizer (restores it) rather than a plain
+    /// Postfix, for two reasons found in code review after the first
+    /// version shipped: (1) Harmony skips a plain Postfix entirely if the
+    /// patched method throws, which would leave m_unlimitedCamera stuck
+    /// `true` for the rest of the session -- a Finalizer runs even then,
+    /// the same guarantee a `finally` block gives; (2) the original
+    /// version stored the previous value in static fields shared across
+    /// every call, which a reentrant call (e.g. another mod's patch on
+    /// the same method re-triggering a click before our own Postfix ran)
+    /// could clobber -- `__state` is per-call, not shared.
     /// </summary>
     [HarmonyPatch(typeof(ChirpPanel), "OnTargetClick")]
     public static class ChirpClickCameraBoundsPatch
     {
-        private static bool _previousUnlimitedCamera;
-        private static bool _shouldRestore;
-
-        internal static void Prefix(UIComponent comp, UIMouseEventParameter p)
+        internal static void Prefix(UIComponent comp, UIMouseEventParameter p, out bool? __state)
         {
-            _shouldRestore = false;
+            __state = null;
 
             if (!(p?.source?.objectUserData is InstanceID id) || id.Type != InstanceType.NetSegment)
             {
@@ -119,24 +129,25 @@ namespace CityAdvisor
                 return;
             }
 
-            _previousUnlimitedCamera = controller.m_unlimitedCamera;
+            __state = controller.m_unlimitedCamera;
             controller.m_unlimitedCamera = true;
-            _shouldRestore = true;
         }
 
-        internal static void Postfix()
+        // Returning __exception unchanged lets it propagate normally --
+        // this Finalizer only guarantees cleanup, it doesn't swallow or
+        // replace whatever the original method (or vanilla) threw.
+        internal static Exception Finalizer(bool? __state, Exception __exception)
         {
-            if (!_shouldRestore)
+            if (__state.HasValue)
             {
-                return;
+                CameraController controller = ToolsModifierControl.cameraController;
+                if (controller != null)
+                {
+                    controller.m_unlimitedCamera = __state.Value;
+                }
             }
 
-            CameraController controller = ToolsModifierControl.cameraController;
-            if (controller != null)
-            {
-                controller.m_unlimitedCamera = _previousUnlimitedCamera;
-            }
-            _shouldRestore = false;
+            return __exception;
         }
     }
 }

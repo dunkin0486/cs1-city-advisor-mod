@@ -59,7 +59,13 @@ namespace CityAdvisor
                 // stable, resolve the live instance and pull FlowRatio via
                 // reflection here. Left unimplemented deliberately — this
                 // should never be a hard requirement for CityAdvisor to
-                // function.
+                // function. NOTE this is a live, current-impact gap, not
+                // just a future nice-to-have: since this always returns
+                // null, EVERY installation (with or without the overlay
+                // mod) runs density-only classification today, and
+                // SPEC.md's own reasoning for wanting flow-ratio gating
+                // ("a busy-but-healthy road shouldn't fire this") is
+                // unmitigated for everyone until this is implemented.
                 return null;
             }
             catch (Exception e)
@@ -84,6 +90,19 @@ namespace CityAdvisor
         // lookup to find them.
         private const string HarmonyId = "com.dunkin0486.cityadvisor";
 
+        // Guards against two lifecycle races found in code review:
+        // OnEnabled defers PatchAll asynchronously (DoOnHarmonyReady may
+        // queue the action rather than run it immediately), while
+        // OnDisabled's UnpatchAll runs synchronously -- without _enabled,
+        // a disable-then-fast-re-enable could let a stale queued callback
+        // patch an already-"disabled" mod. _patched prevents a second
+        // queued callback from patching (and registering everything)
+        // twice. Both are only touched from OnEnabled/OnDisabled/the
+        // DoOnHarmonyReady callback, all on the main thread, so no
+        // additional locking is needed.
+        private static bool _enabled;
+        private static bool _patched;
+
         public string Name => "City Advisor";
 
         public string Description =>
@@ -92,32 +111,53 @@ namespace CityAdvisor
 
         public void OnEnabled()
         {
+            _enabled = true;
             Debug.Log("[CityAdvisor] OnEnabled called, waiting on Harmony...");
             HarmonyHelper.DoOnHarmonyReady(() =>
             {
-                try
+                if (!_enabled || _patched)
                 {
-                    new Harmony(HarmonyId).PatchAll(typeof(CityAdvisorMod).Assembly);
-                    Debug.Log("[CityAdvisor] Harmony patches applied successfully.");
+                    return;
                 }
-                catch (Exception e)
-                {
-                    // Harmony patch failures (e.g. a game update changing
-                    // ChirpPanel.AddEntry's shape) must not be silent --
-                    // the rest of the mod (diagnostics, Chirper messages,
-                    // text location hints) works fine without this patch,
-                    // so log and continue rather than let an uncaught
-                    // exception here look like it broke the whole mod.
-                    Debug.LogError($"[CityAdvisor] Harmony patch failed, click-to-jump will not work: {e}");
-                }
+
+                var harmony = new Harmony(HarmonyId);
+                // Each patch class is applied independently (rather than
+                // one PatchAll(assembly) call) so a failure patching one
+                // -- e.g. a future game update renaming a field
+                // ChirpClickPatch relies on -- can't also silently
+                // prevent ChirpClickCameraBoundsPatch, which patches an
+                // unrelated method, from being applied too.
+                PatchClass(harmony, typeof(ChirpClickPatch));
+                PatchClass(harmony, typeof(ChirpClickCameraBoundsPatch));
+                _patched = true;
             });
         }
 
         public void OnDisabled()
         {
-            if (HarmonyHelper.IsHarmonyInstalled)
+            _enabled = false;
+            if (_patched && HarmonyHelper.IsHarmonyInstalled)
             {
                 new Harmony(HarmonyId).UnpatchAll(HarmonyId);
+            }
+            _patched = false;
+        }
+
+        private static void PatchClass(Harmony harmony, Type patchClass)
+        {
+            try
+            {
+                harmony.CreateClassProcessor(patchClass).Patch();
+                Debug.Log($"[CityAdvisor] Harmony patch applied: {patchClass.Name}");
+            }
+            catch (Exception e)
+            {
+                // A failure here must not be silent, and must not look
+                // like it broke the whole mod -- diagnostics, Chirper
+                // messages, and text location hints all work
+                // independently of any single Harmony patch.
+                Debug.LogError($"[CityAdvisor] Harmony patch failed for {patchClass.Name}, " +
+                                $"that feature will not work: {e}");
             }
         }
     }
@@ -197,17 +237,35 @@ namespace CityAdvisor
     {
         private const double RunIntervalGameDays = 7.0; // TODO: tune
 
+        // How often (real seconds) to check whether RunIntervalGameDays
+        // has elapsed. Was previously an every-frame Update() check --
+        // wasteful for a gate that only changes at day granularity, so
+        // InvokeRepeating on a real-time interval achieves the same
+        // result (checked promptly, not on a strict schedule players
+        // would notice) for a small fraction of the calls.
+        private const float CheckIntervalSeconds = 5f;
+
         private double _lastRunGameDay = -1;
         private readonly List<IDiagnostic> _diagnostics = new List<IDiagnostic>
         {
             new MissingInterchangeDiagnostic(),
         };
 
-        // Findings we've already surfaced, so we don't spam the same
-        // message every pass. Keyed loosely by issue+position for now.
-        private readonly HashSet<string> _alreadyReported = new HashSet<string>();
+        // Findings still active as of the last pass, so a pass that finds
+        // the exact same problem again doesn't re-fire a duplicate chirp.
+        // Replaced wholesale each pass (not merged) so a finding that
+        // disappears -- the player fixed it -- and later reappears -- a
+        // regression -- is treated as new again, matching what SPEC.md
+        // always intended ("don't re-fire ... if nothing has changed")
+        // but an earlier, ever-growing HashSet never actually implemented.
+        private HashSet<string> _previouslyActiveKeys = new HashSet<string>();
 
-        private void Update()
+        private void Start()
+        {
+            InvokeRepeating(nameof(CheckAndRunDiagnostics), CheckIntervalSeconds, CheckIntervalSeconds);
+        }
+
+        private void CheckAndRunDiagnostics()
         {
             double currentGameDay = GetCurrentGameDay();
             if (_lastRunGameDay >= 0 && currentGameDay - _lastRunGameDay < RunIntervalGameDays)
@@ -236,6 +294,8 @@ namespace CityAdvisor
                 BuildingManager = Singleton<BuildingManager>.instance,
             };
 
+            var currentActiveKeys = new HashSet<string>();
+
             foreach (var diagnostic in _diagnostics)
             {
                 List<Finding> findings;
@@ -251,16 +311,33 @@ namespace CityAdvisor
 
                 foreach (var finding in findings)
                 {
-                    string key = $"{finding.Issue}:{finding.Position}";
-                    if (_alreadyReported.Contains(key))
+                    string key = BuildFindingKey(finding);
+                    currentActiveKeys.Add(key);
+
+                    if (_previouslyActiveKeys.Contains(key))
                     {
-                        continue;
+                        continue; // same ongoing problem as last pass
                     }
-                    _alreadyReported.Add(key);
 
                     Surface(finding);
                 }
             }
+
+            _previouslyActiveKeys = currentActiveKeys;
+        }
+
+        // Prefers the specific game object a finding points at (exact,
+        // stable across passes) over stringifying Position, which used
+        // Vector3's default ToString() -- limited float precision that
+        // could in principle collide for two distinct nearby findings.
+        private static string BuildFindingKey(Finding finding)
+        {
+            if (!finding.TargetInstance.IsEmpty)
+            {
+                return $"{finding.Issue}:{finding.TargetInstance.Type}:{finding.TargetInstance.RawData}";
+            }
+
+            return $"{finding.Issue}:{finding.Position}";
         }
 
         private void Surface(Finding finding)
@@ -319,9 +396,21 @@ namespace CityAdvisor
         public List<Finding> Run(DiagnosticContext ctx)
         {
             var findings = new List<Finding>();
-
-            var interchangeNodePositions = FindInterchangeNodes(ctx);
             var segments = ctx.NetManager.m_segments.m_buffer;
+
+            // Computed once per pass and shared by FindInterchangeNodes and
+            // the scan below, instead of calling the virtual
+            // NetAI.IsHighway() up to 3x per segment (once per attached
+            // node in FindInterchangeNodes, once here) -- classification
+            // can't change mid-pass since this runs synchronously on the
+            // main thread with no segment creation/deletion in between.
+            var isHighwayCache = new bool[segments.Length];
+            for (int i = 0; i < segments.Length; i++)
+            {
+                isHighwayCache[i] = IsHighwaySegment(segments[i]);
+            }
+
+            var interchangeNodePositions = FindInterchangeNodes(ctx, segments, isHighwayCache);
 
             // Optional: if the Traffic Flow Overlay mod is installed, prefer
             // requiring low flow-ratio alongside high density to cut false
@@ -336,7 +425,7 @@ namespace CityAdvisor
                 {
                     continue;
                 }
-                if (IsHighwaySegment(segment))
+                if (isHighwayCache[segId])
                 {
                     continue; // only care about arterial/local feeder roads
                 }
@@ -356,7 +445,7 @@ namespace CityAdvisor
                     }
                 }
 
-                Vector3 segmentMid = GetSegmentMidpoint(ctx.NetManager, (ushort)segId);
+                Vector3 segmentMid = GetSegmentMidpoint(ctx.NetManager, segment);
                 float nearestRampDist = NearestDistance(segmentMid, interchangeNodePositions);
 
                 if (nearestRampDist > InterchangeSearchRadius)
@@ -406,11 +495,10 @@ namespace CityAdvisor
             return findings;
         }
 
-        private List<Vector3> FindInterchangeNodes(DiagnosticContext ctx)
+        private List<Vector3> FindInterchangeNodes(DiagnosticContext ctx, NetSegment[] segments, bool[] isHighwayCache)
         {
             var result = new List<Vector3>();
             var nodes = ctx.NetManager.m_nodes.m_buffer;
-            var segments = ctx.NetManager.m_segments.m_buffer;
 
             for (int nodeId = 0; nodeId < nodes.Length; nodeId++)
             {
@@ -433,8 +521,7 @@ namespace CityAdvisor
                 {
                     ushort segId = node.GetSegment(i);
                     if (segId == 0) continue;
-                    var seg = segments[segId];
-                    if (IsHighwaySegment(seg)) touchesHighway = true;
+                    if (isHighwayCache[segId]) touchesHighway = true;
                     else touchesNonHighway = true;
                 }
 
@@ -464,9 +551,8 @@ namespace CityAdvisor
             return info.m_netAI.IsHighway();
         }
 
-        private Vector3 GetSegmentMidpoint(NetManager netManager, ushort segId)
+        private Vector3 GetSegmentMidpoint(NetManager netManager, NetSegment segment)
         {
-            var segment = netManager.m_segments.m_buffer[segId];
             var startNode = netManager.m_nodes.m_buffer[segment.m_startNode];
             var endNode = netManager.m_nodes.m_buffer[segment.m_endNode];
             return (startNode.m_position + endNode.m_position) * 0.5f;
