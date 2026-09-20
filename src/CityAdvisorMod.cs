@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using ColossalFramework;
 using ColossalFramework.Plugins;
@@ -253,7 +252,7 @@ namespace CityAdvisor
             // Falls back to density-only automatically if unavailable.
             float[] flowRatios = CompatUtil.TryGetOverlayFlowRatios();
 
-            for (ushort segId = 0; segId < segments.Length; segId++)
+            for (int segId = 0; segId < segments.Length; segId++)
             {
                 var segment = segments[segId];
                 if ((segment.m_flags & NetSegment.Flags.Created) == 0)
@@ -280,7 +279,7 @@ namespace CityAdvisor
                     }
                 }
 
-                Vector3 segmentMid = GetSegmentMidpoint(ctx.NetManager, segId);
+                Vector3 segmentMid = GetSegmentMidpoint(ctx.NetManager, (ushort)segId);
                 float nearestRampDist = NearestDistance(segmentMid, interchangeNodePositions);
 
                 if (nearestRampDist > InterchangeSearchRadius)
@@ -306,7 +305,7 @@ namespace CityAdvisor
             var nodes = ctx.NetManager.m_nodes.m_buffer;
             var segments = ctx.NetManager.m_segments.m_buffer;
 
-            for (ushort nodeId = 0; nodeId < nodes.Length; nodeId++)
+            for (int nodeId = 0; nodeId < nodes.Length; nodeId++)
             {
                 var node = nodes[nodeId];
                 if ((node.m_flags & NetNode.Flags.Created) == 0)
@@ -317,12 +316,15 @@ namespace CityAdvisor
                 bool touchesHighway = false;
                 bool touchesNonHighway = false;
 
-                // TODO: verify the segment-list field/accessor for nodes in
-                // the installed version — historically an 8-slot array
-                // (m_segment0..m_segment7) but this has been refactored
-                // across patches. Replace with the correct iteration.
-                foreach (ushort segId in GetNodeSegments(node))
+                // NetNode itself exposes CountSegments()/GetSegment(i) over
+                // its 8-slot m_segment0..m_segment7 fields (confirmed via
+                // ILSpy against Assembly-CSharp for the installed version)
+                // — use the game's own accessor rather than the raw fields
+                // so this keeps working if the slot count ever changes.
+                int segmentCount = node.CountSegments();
+                for (int i = 0; i < segmentCount; i++)
                 {
+                    ushort segId = node.GetSegment(i);
                     if (segId == 0) continue;
                     var seg = segments[segId];
                     if (IsHighwaySegment(seg)) touchesHighway = true;
@@ -338,28 +340,21 @@ namespace CityAdvisor
             return result;
         }
 
-        private IEnumerable<ushort> GetNodeSegments(NetNode node)
-        {
-            throw new NotImplementedException(
-                "Enumerate node's attached segment IDs — confirm field layout via ILSpy for installed version.");
-        }
-
         private bool IsHighwaySegment(NetSegment segment)
         {
             NetInfo info = segment.Info;
-            if (info == null) return false;
+            if (info == null || info.m_netAI == null) return false;
 
-            // COMPATIBILITY NOTE: name-based matching is a real liability
-            // with road packs (Network Extensions 2, CSUR, etc.) that don't
-            // follow vanilla naming. Prefer info.m_class.m_subService ==
-            // ItemClass.SubService.PublicTransportPlane-equivalent-for-
-            // highways once confirmed against the decompiled enum for the
-            // installed version — that's the mechanism roads themselves use
-            // to self-declare as highway, so custom road packs that want
-            // highway behavior already have to set it correctly. Treat the
-            // string check below as a temporary fallback, not the long-term
-            // approach.
-            return info.name != null && info.name.IndexOf("Highway", StringComparison.OrdinalIgnoreCase) >= 0;
+            // Confirmed via ILSpy against Assembly-CSharp for the installed
+            // version: there is no ItemClass.SubService.Highway value (the
+            // SPEC.md assumption was wrong) — vanilla instead exposes a
+            // virtual NetAI.IsHighway() (default false), overridden by
+            // RoadBaseAI to return its m_highwayRules field. This is the
+            // exact check the game itself uses (e.g. for highway-specific
+            // rendering and traffic rules), so any road pack that wants
+            // highway behavior already has to set m_highwayRules — no
+            // name-matching fallback needed.
+            return info.m_netAI.IsHighway();
         }
 
         private Vector3 GetSegmentMidpoint(NetManager netManager, ushort segId)
