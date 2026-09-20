@@ -14,9 +14,14 @@ warnings. See [SPEC.md](SPEC.md) for the full design and
   must be reproducible and explainable from game state alone. Wording
   variation via LLM is a possible *future* add-on and out of scope now.
 - **No Harmony patches for diagnostic logic.** Diagnostics read game state
-  after the fact; they don't intercept simulation methods. A patch is only
-  justified for the notification-surfacing step if `ChirpAI`/`MessageManager`
-  turns out to have no clean public "inject a message" entry point.
+  after the fact; they don't intercept simulation methods. This still
+  holds — `MessageManager.QueueMessage` needed no patch to inject a chirp.
+  One patch does exist: `ChirpClickPatch` (`src/ChirpClickPatch.cs`),
+  which Postfixes `ChirpPanel.AddEntry` solely to make the click-to-jump
+  target our finding's location instead of vanilla's Citizen-only default
+  — see SPEC.md "Harmony" for why this one was judged worth it. Don't
+  treat that as license to reach for Harmony elsewhere; each new patch is
+  its own compatibility surface and its own case to make.
 - **Soft dependencies only.** Never add a hard project reference to another
   mod's assembly (e.g. Traffic Flow Overlay). Detect via
   `PluginManager.instance.GetPluginsInfo()` and access its data via

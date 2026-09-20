@@ -13,6 +13,11 @@ modded games, and milestones. Skeleton source lives in
 
 - Cities: Skylines (base game)
 - .NET SDK (targets `net35`, but the modern SDK builds it fine)
+- Optional: the ["Harmony (Mod Dependency)"](https://steamcommunity.com/sharedfiles/filedetails/?id=2040656402)
+  Workshop item, for click-to-jump on a finding's Chirper message (also
+  required by e.g. Traffic Manager: President Edition, so likely already
+  present in a modded setup). Without it, findings still work — same
+  Chirper message and text location hint, just no clickable camera jump.
 
 ## Building
 
@@ -35,6 +40,8 @@ in the detection path, soft dependencies on other mods).
 
 ## Status
 
-Milestone 1 in progress: implementing the missing-interchange diagnostic
-end-to-end with console-only output, before wiring up in-game
-notifications. See SPEC.md milestones for the full sequence.
+Milestones 1 and 2 done and validated against a real 179k-population
+save: the missing-interchange diagnostic fires correctly, and findings
+surface as Chirper messages with a text location hint and (with Harmony
+present) a clickable camera jump to the exact spot. See SPEC.md
+milestones for what's next.

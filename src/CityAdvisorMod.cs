@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using CitiesHarmony.API;
 using ColossalFramework;
 using ColossalFramework.Plugins;
+using HarmonyLib;
 using ICities;
 using UnityEngine;
 
@@ -73,11 +75,36 @@ namespace CityAdvisor
     /// </summary>
     public class CityAdvisorMod : IUserMod
     {
+        // Not part of the ICities.IUserMod interface (confirmed via ILSpy
+        // it only declares Name/Description on this game version) -- the
+        // game's PluginManager looks these up by reflection
+        // (GetMethod("OnEnabled"/"OnDisabled", ...)) and invokes them with
+        // no arguments if present, confirmed via ILSpy against
+        // ColossalManaged.dll. Public, no-arg, void is required for that
+        // lookup to find them.
+        private const string HarmonyId = "com.dunkin0486.cityadvisor";
+
         public string Name => "City Advisor";
 
         public string Description =>
             "Diagnoses root causes behind city problems (e.g. missing highway " +
             "interchanges) instead of generic 'traffic flow is low' messages.";
+
+        public void OnEnabled()
+        {
+            HarmonyHelper.DoOnHarmonyReady(() =>
+            {
+                new Harmony(HarmonyId).PatchAll(typeof(CityAdvisorMod).Assembly);
+            });
+        }
+
+        public void OnDisabled()
+        {
+            if (HarmonyHelper.IsHarmonyInstalled)
+            {
+                new Harmony(HarmonyId).UnpatchAll(HarmonyId);
+            }
+        }
     }
 
     public class LoadingExtension : LoadingExtensionBase
