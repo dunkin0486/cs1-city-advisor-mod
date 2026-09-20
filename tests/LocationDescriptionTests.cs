@@ -49,5 +49,30 @@ namespace CityAdvisor.Tests
             string result = LocationDescription.DescribeLocation(string.Empty, x: 1f, z: 0f);
             Assert.Equal("to the east of the city center", result);
         }
+
+        [Theory]
+        [InlineData(0f, 0f, true)]
+        [InlineData(4800f, 4800f, true)]
+        [InlineData(-4800f, -4800f, true)]
+        [InlineData(4800.1f, 0f, false)]
+        [InlineData(0f, -4800.1f, false)]
+        public void IsWithinVanillaDistrictGrid_MatchesExpectedBounds(float x, float z, bool expected)
+        {
+            Assert.Equal(expected, LocationDescription.IsWithinVanillaDistrictGrid(x, z));
+        }
+
+        [Theory]
+        [InlineData(-8600.4f, -893f)]   // real finding from a live save that reported a wrong district
+        [InlineData(8603.6f, 3090.9f)]  // another real finding, same wrong district, opposite map edge
+        public void IsWithinVanillaDistrictGrid_FalseForRealOutOfRangeFindings(float x, float z)
+        {
+            // DistrictManager.GetDistrict's 512x512 grid at 19.2m/cell only
+            // covers vanilla's ~4915m range and silently clamps beyond it
+            // (confirmed via ILSpy) -- these are real coordinates from a
+            // live 81-Tiles save where GetDistrict returned the same wrong
+            // district for every far-map finding regardless of actual
+            // position. Must be treated as untrustworthy, not used.
+            Assert.False(LocationDescription.IsWithinVanillaDistrictGrid(x, z));
+        }
     }
 }

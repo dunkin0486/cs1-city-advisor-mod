@@ -368,8 +368,18 @@ namespace CityAdvisor
                     // district 0 (the "nothing painted here" sentinel, not
                     // an error) is a real, expected case, not defensive
                     // code for something that can't happen.
-                    byte districtId = ctx.DistrictManager.GetDistrict(segmentMid);
-                    string districtName = ctx.DistrictManager.GetDistrictName(districtId);
+                    //
+                    // GetDistrict's grid only covers vanilla's ~4915m
+                    // range and silently clamps beyond it (confirmed live:
+                    // every far-map finding was misreported as the same
+                    // wrong district) -- don't even call it outside that
+                    // range, since the result can't be trusted at all.
+                    string districtName = null;
+                    if (LocationDescription.IsWithinVanillaDistrictGrid(segmentMid.x, segmentMid.z))
+                    {
+                        byte districtId = ctx.DistrictManager.GetDistrict(segmentMid);
+                        districtName = ctx.DistrictManager.GetDistrictName(districtId);
+                    }
                     string locationHint = LocationDescription.DescribeLocation(
                         districtName, segmentMid.x, segmentMid.z);
 
