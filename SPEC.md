@@ -74,8 +74,15 @@ segments exists with no highway on/off-ramp within a threshold distance.
   interface (`Run(DiagnosticContext ctx) -> List<Finding>`), so adding more
   diagnostics later doesn't mean touching the scheduler.
 - Findings get deduplicated/throttled — don't re-fire the same finding every
-  pass if nothing has changed and the player hasn't acted on it yet. Track a
-  simple "already reported, not yet resolved" set keyed by location.
+  pass if nothing has changed and the player hasn't acted on it yet. Tracked
+  as the set of keys active *as of the last pass*, replaced wholesale each
+  pass rather than merged — a finding that disappears (fixed) and later
+  reappears (a regression) is treated as new again, not suppressed forever.
+  An earlier ever-growing `HashSet` never actually implemented that "not yet
+  resolved" qualifier (found in code review); fixed by diffing against the
+  current pass's active set instead of just adding to a set that never
+  shrinks. Keyed by the finding's `TargetInstance` (exact, stable) when one
+  exists, falling back to a `Position`-based string key otherwise.
 
 ## Surfacing findings
 
@@ -249,6 +256,26 @@ precisely in the Workshop description once published: "no load order
 requirements for diagnostics; requires Harmony (Mod Dependency) for
 click-to-jump, degrades to text-only location hints without it" — not the
 older unqualified "no load order requirements."
+
+**Harmony patch robustness, from code review.** Two issues found in the
+first version of `ChirpClickCameraBoundsPatch`: a plain Postfix doesn't
+run if the patched method throws (Harmony skips it, same as a `finally`
+block would NOT be skipped, but a Postfix is not a `finally`), which
+could leave `m_unlimitedCamera` stuck `true` for the rest of the session;
+and the previous-value/should-restore bookkeeping lived in static fields
+shared across every call, which a reentrant call could clobber. Fixed by
+switching to a Prefix + **Finalizer** (Harmony's guaranteed-cleanup patch
+type, runs even on exception) with a per-call `__state` instead of shared
+statics. Separately, `OnEnabled`/`OnDisabled` are now guarded against two
+lifecycle races: `OnEnabled` defers `PatchAll` asynchronously via
+`HarmonyHelper.DoOnHarmonyReady` while `OnDisabled` unpatches
+synchronously, so a fast disable-then-reenable could patch an already-
+"disabled" mod or double-patch — an `_enabled`/`_patched` pair of guards
+closes both. `ChirpClickPatch` and `ChirpClickCameraBoundsPatch` are now
+patched independently (`Harmony.CreateClassProcessor(type).Patch()` per
+class) rather than one `PatchAll(assembly)` call, so a future failure
+patching one (e.g. a game update renaming a field) can't silently prevent
+the other, unrelated patch from applying too.
 
 ## Milestones
 
