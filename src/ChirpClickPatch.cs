@@ -111,4 +111,37 @@ namespace CityAdvisor
             }
         }
     }
+
+    /// <summary>
+    /// Pure logging Prefix+Postfix on CameraController.SetTarget itself --
+    /// added after ruling out every other layer: no other mod patches
+    /// AddEntry/OnTargetClick (confirmed via Harmony.GetPatchInfo), and a
+    /// live test showed OnTargetClick received a fully valid, followable
+    /// NetSegment InstanceID for a genuine target change (not a same-
+    /// target no-op) yet the camera didn't move at all. This directly
+    /// observes whether SetTarget is even invoked with our data, and
+    /// whether its private state (m_targetInstance/m_targetPosition/
+    /// m_targetSize) actually changes afterward -- narrowing "SetTarget
+    /// silently no-ops for this id" from "rendering doesn't reflect an
+    /// applied state change" (two very different bugs to chase).
+    /// ___ fields bind to CameraController's private fields by Harmony's
+    /// naming convention.
+    /// </summary>
+    [HarmonyPatch(typeof(CameraController), "SetTarget")]
+    public static class SetTargetDebugPatch
+    {
+        internal static void Prefix(InstanceID id, Vector3 position, bool zoomIn, InstanceID ___m_targetInstance)
+        {
+            Debug.Log($"[CityAdvisor] SetTarget CALLED: id.Type={id.Type} id.NetSegment={id.NetSegment} " +
+                      $"position={position} zoomIn={zoomIn} currentTarget.Type={___m_targetInstance.Type} " +
+                      $"sameAsCurrentTarget={id == ___m_targetInstance}");
+        }
+
+        internal static void Postfix(InstanceID ___m_targetInstance, Vector3 ___m_targetPosition, float ___m_targetSize)
+        {
+            Debug.Log($"[CityAdvisor] SetTarget AFTER: m_targetInstance.Type={___m_targetInstance.Type} " +
+                      $"netSegment={___m_targetInstance.NetSegment} m_targetPosition={___m_targetPosition} " +
+                      $"m_targetSize={___m_targetSize}");
+        }
+    }
 }
