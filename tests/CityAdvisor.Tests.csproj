@@ -16,6 +16,7 @@
   -->
   <ItemGroup>
     <Compile Include="../src/MissingInterchangeScoring.cs" Link="MissingInterchangeScoring.cs" />
+    <Compile Include="../src/LocationDescription.cs" Link="LocationDescription.cs" />
   </ItemGroup>
 
   <ItemGroup>

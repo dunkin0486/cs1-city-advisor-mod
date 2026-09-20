@@ -90,6 +90,32 @@ CS1 has existing moddable hooks other notification-style mods use:
   with `senderID = 0` just renders with no clickable citizen target, which
   is correct here, not a placeholder.
 
+**Location hints, not click-to-jump.** Confirmed via ILSpy that vanilla's
+click-to-jump-to-location on a chirp is Citizen-only:
+`ChirpPanel.AddEntry` hardcodes `objectUserData = new InstanceID { Citizen
+= message.senderID }`, and `OnTargetClick` only ever reads that — there is
+no hook in `IChirperMessage` for a different target type. Getting a real
+camera-jump would require a Harmony patch on `ChirpPanel.AddEntry` to
+substitute a `NetSegment`-tagged `InstanceID` (confirmed
+`InstanceID.NetSegment` exists and works the same way generically) —
+deliberately not done, since it would drop the "no load order
+requirements" claim for the whole mod, not just this feature, and every
+chirp in the game goes through that method (not just ours), so it's shared
+patch surface with any other mod touching Chirper.
+
+Instead, `DetailMessage` includes a text location hint via
+`LocationDescription.DescribeLocation`: the finding's district name via
+`DistrictManager.GetDistrict`/`GetDistrictName` when available, falling
+back to an 8-point compass direction from the map center
+(`LocationDescription.CompassDirectionFromCenter`) when not — confirmed via
+ILSpy that `GetDistrictName` returns `null` for district `0` (the "nothing
+painted here" sentinel), not an error or empty string, so the fallback
+path is a real, expected case, not defensive-programming-for-a-case-that-
+can't-happen. The compass-direction convention (+z north, +x east) is
+assumed from standard Unity world axes and has **not** been visually
+cross-checked against CS1's actual in-game minimap orientation — treat it
+as a rough hint until verified in-game.
+
 ## Compatibility
 
 This mod is lower-risk than the overlay mod — it's a read-only diagnostic
