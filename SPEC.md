@@ -25,15 +25,19 @@ segments exists with no highway on/off-ramp within a threshold distance.
 
 **Data needed**:
 
-- Highway segment identification: classify by `NetInfo` — highway pieces
-  are identifiable by `NetInfo.m_class` / prefab name (contains "Highway").
-  TODO: confirm exact class values against decompiled `ItemClass.SubService`
-  enum for the installed game version.
+- Highway segment identification: **confirmed via ILSpy against
+  Assembly-CSharp** — there is no `ItemClass.SubService.Highway` value (an
+  earlier assumption in this doc was wrong). Vanilla instead exposes a
+  virtual `NetAI.IsHighway()` (default `false`), overridden by `RoadBaseAI`
+  to return its `m_highwayRules` field. Classify via
+  `segment.Info.m_netAI.IsHighway()` — this is the exact check the game
+  itself uses, so any road pack wanting highway behavior already has to set
+  `m_highwayRules` correctly. No name-matching fallback needed.
 - Interchange/ramp node detection: a node is an interchange point if it has
   at least one highway-classified segment AND at least one non-highway
-  segment attached. Walk `NetManager.instance.m_nodes.m_buffer`, for each
-  node inspect its `m_segment0..m_segment7` (or the segment array,
-  field naming may differ by version) and classify each attached segment.
+  segment attached. `NetNode` exposes `CountSegments()`/`GetSegment(int)`
+  over its 8-slot `m_segment0..m_segment7` fields (confirmed via ILSpy) —
+  use those accessors rather than the raw fields directly.
 - Density signal: `NetSegment.m_trafficDensity`, same as the overlay mod.
   If the Traffic Flow Overlay mod's flow-ratio data is available (soft
   dependency, not required), prefer requiring high density AND low flow
@@ -106,15 +110,13 @@ diagnostic (e.g. one that breaks against a modded road pack with unusual
 `NetInfo` naming) should log and skip, not take down the whole advisor or
 the other diagnostics in the same pass.
 
-**Road pack compatibility for highway classification**: the
-`IsHighwaySegment` name-based check (`info.name.Contains("Highway")`) is a
-real risk with a heavily modded game — packs like Network Extensions 2 or
-CSUR introduce road types that may not follow vanilla naming, and some
-custom highway-style roads may not be classified as highway by name at all.
-Classifying by `ItemClass.SubService` (the vanilla mechanism roads
-themselves use to declare "I'm a highway") will be more robust than string
-matching once confirmed against the decompiled enum — treat the current
-name check as a placeholder to replace, not a shortcut to keep.
+**Road pack compatibility for highway classification**: `IsHighwaySegment`
+now classifies via `segment.Info.m_netAI.IsHighway()` rather than name
+matching. Road packs like Network Extensions 2 or CSUR that want highway
+behavior (highway-specific traffic rules and rendering) already have to set
+`RoadBaseAI.m_highwayRules` correctly for vanilla to treat their roads as
+highways at all, so this stays robust across road packs without any
+name-based fallback.
 
 **Soft dependency on the Traffic Flow Overlay mod**: don't hard-reference
 its assembly. Detect it at runtime via `PluginManager.instance.GetPluginsInfo()`,
