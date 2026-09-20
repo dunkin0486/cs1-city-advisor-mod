@@ -70,4 +70,45 @@ namespace CityAdvisor
                               "redirected, chirp will still show but won't be clickable.");
         }
     }
+
+    /// <summary>
+    /// Pure logging Prefix on OnTargetClick -- does not affect vanilla
+    /// behavior (a void-returning Harmony Prefix always lets the original
+    /// method run afterward). Added because a live test showed our
+    /// redirected NetSegment InstanceID gets set correctly (confirmed via
+    /// ChirpClickPatch's own log line) but clicking the chirp still does
+    /// nothing, while an unrelated vanilla citizen chirp at the same
+    /// far-map-edge location worked fine -- ruling out a general
+    /// large-map/GameAreaManager clamping issue (also independently
+    /// confirmed false via ILSpy: InstanceManager.IsValid/FollowInstance/
+    /// GetPosition all fully support NetSegment). This logs exactly what
+    /// OnTargetClick sees at the moment of the click, to find where in the
+    /// remaining chain (objectUserData integrity, IsValid, or something in
+    /// SetTarget/FollowTarget itself) this actually breaks.
+    /// </summary>
+    [HarmonyPatch(typeof(ChirpPanel), "OnTargetClick")]
+    public static class ChirpClickDebugPatch
+    {
+        internal static void Prefix(UIComponent comp, UIMouseEventParameter p)
+        {
+            if (p?.source == null)
+            {
+                Debug.Log("[CityAdvisor] OnTargetClick: p.source is null, vanilla will no-op.");
+                return;
+            }
+
+            object raw = p.source.objectUserData;
+            if (raw is InstanceID id)
+            {
+                Debug.Log($"[CityAdvisor] OnTargetClick: objectUserData is InstanceID " +
+                          $"type={id.Type} netSegment={id.NetSegment} " +
+                          $"isEmpty={id.IsEmpty} isValid={InstanceManager.IsValid(id)}");
+            }
+            else
+            {
+                Debug.Log("[CityAdvisor] OnTargetClick: objectUserData is NOT an InstanceID, " +
+                          $"actual type={raw?.GetType().FullName ?? "null"}");
+            }
+        }
+    }
 }
