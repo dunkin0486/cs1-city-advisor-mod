@@ -93,14 +93,36 @@ CS1 has existing moddable hooks other notification-style mods use:
 **Location hints, plus click-to-jump.** `DetailMessage` includes a text
 location hint via `LocationDescription.DescribeLocation`: the finding's
 district name via `DistrictManager.GetDistrict`/`GetDistrictName` when
-available, falling back to an 8-point compass direction from the map
-center (`LocationDescription.CompassDirectionFromCenter`) when not —
-confirmed via ILSpy that `GetDistrictName` returns `null` for district `0`
-(the "nothing painted here" sentinel), not an error or empty string, so
-the fallback path is a real, expected case. The compass-direction
-convention (+z north, +x east) is assumed from standard Unity world axes
-and has **not** been visually cross-checked against CS1's actual in-game
-minimap orientation — treat it as a rough hint until verified in-game.
+available and trustworthy, falling back to an 8-point compass direction
+from the map center (`LocationDescription.CompassDirectionFromCenter`)
+otherwise — confirmed via ILSpy that `GetDistrictName` returns `null` for
+district `0` (the "nothing painted here" sentinel), not an error or empty
+string, so that fallback path is a real, expected case. The
+compass-direction convention (+z north, +x east) is assumed from standard
+Unity world axes and has **not** been visually cross-checked against
+CS1's actual in-game minimap orientation — treat it as a rough hint until
+verified in-game.
+
+**District lookup has a hard range limit — confirmed and fixed live.**
+`GetDistrict`'s grid is a fixed 512x512 array at 19.2m/cell
+(`Mathf.Clamp((int)(x/19.2f+256f), 0, 511)`), covering only vanilla's
+~4915m range (the 25-tile map). Beyond that, the grid *index* silently
+clamps to the edge column/row rather than the lookup failing — it returns
+whatever district occupies that edge cell of the vanilla-sized grid, not
+the real district at the true (81-Tiles-extended) location. Live-tested
+on Alder City (which uses 81 Tiles): every finding beyond that range
+reported the same wrong district name regardless of actual position (once
+at the west map edge near Pine District, once at the east edge near Green
+Hills District — both reported as "Bedford Heights", a district that
+turned out to be nowhere near either). `LocationDescription.
+IsWithinVanillaDistrictGrid` gates the district lookup on this range (a
+conservative ±4800m, just inside the exact ~4915.2m bound) — outside it,
+the district name is never even fetched, and the compass fallback is used
+instead. This is the same underlying category of bug as the camera-clamp
+fix above (81 Tiles extends buildable coordinate range beyond several
+vanilla systems' fixed-size grids), just in a different vanilla subsystem
+— worth remembering if a future diagnostic hits similar "same wrong
+answer regardless of input" symptoms.
 
 On top of the text hint, clicking a City Advisor chirp's sender name now
 jumps the camera to the finding's location — implemented via a Harmony
