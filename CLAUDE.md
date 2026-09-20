@@ -45,8 +45,18 @@ rather than assuming a path.
 
 ## Testing
 
-No automated test suite yet (milestone 1 is console-log validation against
-a real save — see SPEC.md). Don't invent a unit test harness for logic that
-fundamentally depends on live `NetManager`/`DistrictManager` state without
-discussing the approach first (e.g. whether to build fixture/mock buffers
-is a real design decision, not a given).
+`tests/CityAdvisor.Tests.csproj` unit tests game-independent pure logic
+only (e.g. `MissingInterchangeScoring`), runs in CI on every PR
+(`.github/workflows/test.yml`), and deliberately has zero reference to the
+CS1 game assemblies — CI has no licensed game install to build against.
+When adding logic that doesn't need live `NetManager`/`DistrictManager`
+state (scoring, thresholds, key formatting), extract it into its own file
+and add tests the same way `MissingInterchangeScoring` does.
+
+For the graph-walking diagnostic logic itself, which does depend on real
+game state: there's no fixture/mock layer for `NetManager` et al., and
+building one (fake `NetNode`/`NetSegment`/`NetAI` stubs to test the
+walking logic in isolation) is a real scope decision the user explicitly
+deferred when this test project was set up — don't build it unprompted.
+Validate that logic by running against a real save instead (see
+CONTRIBUTING.md).

@@ -307,21 +307,12 @@ namespace CityAdvisor
 
                 if (nearestRampDist > InterchangeSearchRadius)
                 {
-                    // Saturating distance factor: 0 right at the threshold,
-                    // asymptotically approaching (never quite reaching) 1 as
-                    // distance grows — as opposed to a plain
-                    // (distance / threshold) ratio, which exceeds 1 almost
-                    // immediately past the threshold on any real save and
-                    // makes Clamp01 flatten every finding to the same
-                    // severity (confirmed on a 179k-pop test city, where
-                    // every real finding was 4-6x past the threshold and
-                    // all came out as severity 1.00).
-                    float distanceFactor = 1f - (InterchangeSearchRadius / nearestRampDist);
                     findings.Add(new Finding
                     {
                         Issue = "missing_interchange",
                         Position = segmentMid,
-                        Severity = Mathf.Clamp01(density * distanceFactor),
+                        Severity = MissingInterchangeScoring.CalculateSeverity(
+                            density, nearestRampDist, InterchangeSearchRadius),
                         DetailMessage =
                             $"High traffic density with no highway interchange within " +
                             $"{InterchangeSearchRadius:F0}m (nearest is {nearestRampDist:F0}m away).",

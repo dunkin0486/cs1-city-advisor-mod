@@ -1,0 +1,29 @@
+name: test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      # Only tests/CityAdvisor.Tests.csproj is built here, not
+      # CityAdvisorMod.csproj -- the main mod project requires the actual
+      # Cities: Skylines game assemblies (ICities/ColossalManaged/
+      # Assembly-CSharp/UnityEngine) via CS1_MANAGED_PATH, which aren't
+      # available on a hosted runner (proprietary, not something we can
+      # commit or download here). The test project deliberately has zero
+      # dependency on those and only compiles game-independent source
+      # files -- see tests/CityAdvisor.Tests.csproj and CONTRIBUTING.md.
+      - name: Run unit tests
+        run: dotnet test tests/CityAdvisor.Tests.csproj --configuration Release
