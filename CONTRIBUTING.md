@@ -22,7 +22,10 @@
 - **No Harmony patches for diagnostic logic.** Diagnostics read game state
   (`NetManager`, `DistrictManager`, `BuildingManager`) after the fact; they
   don't intercept simulation methods. Keep it that way unless a diagnostic
-  genuinely can't be expressed as a read-only pass.
+  genuinely can't be expressed as a read-only pass. (One Harmony patch does
+  exist for the click-to-jump notification enhancement — see SPEC.md
+  "Harmony" — but that's a separate, deliberate exception, not a precedent
+  for patching diagnostic logic.)
 - **No LLM in the diagnosis path.** Detection must stay deterministic
   graph/geometry queries against exact sim data, so a finding is always
   explainable and reproducible. An LLM phrasing layer is a possible future

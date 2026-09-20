@@ -90,45 +90,76 @@ CS1 has existing moddable hooks other notification-style mods use:
   with `senderID = 0` just renders with no clickable citizen target, which
   is correct here, not a placeholder.
 
-**Location hints, not click-to-jump.** Confirmed via ILSpy that vanilla's
-click-to-jump-to-location on a chirp is Citizen-only:
-`ChirpPanel.AddEntry` hardcodes `objectUserData = new InstanceID { Citizen
-= message.senderID }`, and `OnTargetClick` only ever reads that — there is
-no hook in `IChirperMessage` for a different target type. Getting a real
-camera-jump would require a Harmony patch on `ChirpPanel.AddEntry` to
-substitute a `NetSegment`-tagged `InstanceID` (confirmed
-`InstanceID.NetSegment` exists and works the same way generically) —
-deliberately not done, since it would drop the "no load order
-requirements" claim for the whole mod, not just this feature, and every
-chirp in the game goes through that method (not just ours), so it's shared
-patch surface with any other mod touching Chirper.
+**Location hints, plus click-to-jump.** `DetailMessage` includes a text
+location hint via `LocationDescription.DescribeLocation`: the finding's
+district name via `DistrictManager.GetDistrict`/`GetDistrictName` when
+available, falling back to an 8-point compass direction from the map
+center (`LocationDescription.CompassDirectionFromCenter`) when not —
+confirmed via ILSpy that `GetDistrictName` returns `null` for district `0`
+(the "nothing painted here" sentinel), not an error or empty string, so
+the fallback path is a real, expected case. The compass-direction
+convention (+z north, +x east) is assumed from standard Unity world axes
+and has **not** been visually cross-checked against CS1's actual in-game
+minimap orientation — treat it as a rough hint until verified in-game.
 
-Instead, `DetailMessage` includes a text location hint via
-`LocationDescription.DescribeLocation`: the finding's district name via
-`DistrictManager.GetDistrict`/`GetDistrictName` when available, falling
-back to an 8-point compass direction from the map center
-(`LocationDescription.CompassDirectionFromCenter`) when not — confirmed via
-ILSpy that `GetDistrictName` returns `null` for district `0` (the "nothing
-painted here" sentinel), not an error or empty string, so the fallback
-path is a real, expected case, not defensive-programming-for-a-case-that-
-can't-happen. The compass-direction convention (+z north, +x east) is
-assumed from standard Unity world axes and has **not** been visually
-cross-checked against CS1's actual in-game minimap orientation — treat it
-as a rough hint until verified in-game.
+On top of the text hint, clicking a City Advisor chirp's sender name now
+jumps the camera to the finding's location — implemented via a Harmony
+patch (`ChirpClickPatch`, in `src/ChirpClickPatch.cs`), after determining
+this wasn't reachable any other way. Confirmed via ILSpy that vanilla's
+click-to-jump is Citizen-only: `ChirpPanel.AddEntry` hardcodes
+`objectUserData = new InstanceID { Citizen = message.senderID }`, and
+`OnTargetClick` only ever reads that — no `IChirperMessage` hook exists
+for a different target type. Rather than reimplementing `OnTargetClick`'s
+camera-jump logic, `ChirpClickPatch` **Postfixes `AddEntry`** and
+overwrites the button's `objectUserData` with a `NetSegment`-tagged
+`InstanceID` for our messages only, then lets vanilla's unmodified
+`OnTargetClick` handle the click — confirmed via ILSpy that
+`InstanceManager.IsValid`/`FollowInstance` already fully support
+`InstanceType.NetSegment` as a followable target, same as any vanilla
+Citizen/Building/etc. target. See "Harmony" below for why this was
+initially deferred and what changed.
 
 ## Compatibility
 
-This mod is lower-risk than the overlay mod — it's a read-only diagnostic
-pass with no Harmony patches strictly required for v1 — but compatibility
-still needs explicit handling, especially since the target audience runs a
-heavily modded game.
+This mod's core diagnostic is still a read-only pass with no Harmony
+patches — the only patch is `ChirpClickPatch`, added specifically for
+click-to-jump (see "Harmony" below). Compatibility still needs explicit
+handling, especially since the target audience runs a heavily modded
+game.
 
-**No Harmony patches needed for the core diagnostic.** Reading
+**No Harmony patches for the core diagnostic, still true.** Reading
 `NetManager`, `DistrictManager`, and `BuildingManager` buffers doesn't
-require intercepting any game method — just iterating public state. Keep it
-this way as long as possible; every patch is a new compatibility surface.
-The notification surfacing step (milestone 2) turned out not to need one
-either — `MessageManager.QueueMessage` is a clean public entry point.
+require intercepting any game method — just iterating public state. Keep
+it this way; every additional patch is a new compatibility surface. The
+notification surfacing step (`MessageManager.QueueMessage`) also needed no
+patch — only the *click-to-jump enhancement* on top of it did.
+
+**Harmony**: initially deferred (see git history / prior SPEC.md
+revisions) specifically because it would drop the "no load order
+requirements" claim and add shared patch surface on `ChirpPanel`, a method
+any other Chirper-touching mod could also patch. Revisited after
+confirming (via web research, not assumption) that Harmony is
+near-universal in the CS1 ecosystem and the "duplicate copies" risk is
+already solved by convention: mods depend on a single shared "Harmony
+(Mod Dependency)" Workshop item (boformer/CitiesHarmony) via the
+`CitiesHarmony.API` NuGet package, rather than each bundling their own
+`0Harmony.dll`. Traffic Manager: President Edition — already installed in
+the save this mod is tested against — requires that same shared
+dependency, meaning Harmony is very likely already loaded in any heavily
+modded CS1 setup. `CityAdvisorMod.csproj` references `CitiesHarmony.API`
+only (not a separate `Lib.Harmony` package — that combination produced a
+`CS0433` duplicate-type error at compile time, since `CitiesHarmony.API`
+transitively brings its own compile-time Harmony assembly). Patches are
+applied via `HarmonyHelper.DoOnHarmonyReady` from `CityAdvisorMod`'s
+`OnEnabled()` — confirmed via ILSpy that `OnEnabled`/`OnDisabled` aren't
+part of the compiled `ICities.IUserMod` interface on this game version,
+but `PluginManager` looks them up by reflection
+(`GetType().GetMethod("OnEnabled", ...)`) and invokes them with no
+arguments if present, so a public no-arg `void OnEnabled()` method is
+required and sufficient. The remaining real risk, not eliminated by any
+of this: another mod patching the exact same method
+(`ChirpPanel.AddEntry`) could still conflict — narrower and quieter than a
+hot method like `RoadBaseAI.UpdateLanes`, but not zero.
 
 **Defensive diagnostic execution**: each `IDiagnostic.Run()` call is already
 wrapped in try/catch in the scheduler skeleton — keep that. A malformed
@@ -158,12 +189,17 @@ in-game cadence rather than live, this matters less for flicker/noise but
 still affects threshold tuning — plan on thresholds being settings-UI-
 configurable rather than hardcoded once past the first working diagnostic.
 
-**Load order**: this mod doesn't need to load before or after any specific
-mod for its core diagnostic to work, since it's pure read-after-the-fact
-analysis on a timer, not something hooking a specific simulation step. Note
-this explicitly in the Workshop description once published — "no load
-order requirements" is a real selling point for a mod aimed at heavily
-modded setups.
+**Load order**: the core diagnostic still has no load order requirements —
+pure read-after-the-fact analysis on a timer, not hooking a specific
+simulation step. That claim no longer extends to the whole mod, though:
+`ChirpClickPatch` requires the shared Harmony dependency
+(boformer/CitiesHarmony) to be present to activate, and depends on
+`ChirpPanel.AddEntry`'s current shape — a real, if narrow, load-order/
+compatibility surface the core diagnostic doesn't have. Say this
+precisely in the Workshop description once published: "no load order
+requirements for diagnostics; requires Harmony (Mod Dependency) for
+click-to-jump, degrades to text-only location hints without it" — not the
+older unqualified "no load order requirements."
 
 ## Milestones
 

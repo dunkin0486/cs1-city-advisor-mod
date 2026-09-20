@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
+using CitiesHarmony.API;
 using ColossalFramework;
 using ColossalFramework.Plugins;
+using HarmonyLib;
 using ICities;
 using UnityEngine;
 
@@ -73,11 +75,36 @@ namespace CityAdvisor
     /// </summary>
     public class CityAdvisorMod : IUserMod
     {
+        // Not part of the ICities.IUserMod interface (confirmed via ILSpy
+        // it only declares Name/Description on this game version) -- the
+        // game's PluginManager looks these up by reflection
+        // (GetMethod("OnEnabled"/"OnDisabled", ...)) and invokes them with
+        // no arguments if present, confirmed via ILSpy against
+        // ColossalManaged.dll. Public, no-arg, void is required for that
+        // lookup to find them.
+        private const string HarmonyId = "com.dunkin0486.cityadvisor";
+
         public string Name => "City Advisor";
 
         public string Description =>
             "Diagnoses root causes behind city problems (e.g. missing highway " +
             "interchanges) instead of generic 'traffic flow is low' messages.";
+
+        public void OnEnabled()
+        {
+            HarmonyHelper.DoOnHarmonyReady(() =>
+            {
+                new Harmony(HarmonyId).PatchAll(typeof(CityAdvisorMod).Assembly);
+            });
+        }
+
+        public void OnDisabled()
+        {
+            if (HarmonyHelper.IsHarmonyInstalled)
+            {
+                new Harmony(HarmonyId).UnpatchAll(HarmonyId);
+            }
+        }
     }
 
     public class LoadingExtension : LoadingExtensionBase
@@ -118,6 +145,12 @@ namespace CityAdvisor
         public Vector3 Position;
         public float Severity;        // 0..1
         public string DetailMessage;  // human-readable, shown in notification
+
+        // Empty (InstanceID.Empty) when no specific game object represents
+        // this finding's location. When set, ChirpClickPatch uses it to
+        // make clicking the chirp's sender jump the camera here — see
+        // SPEC.md "Location hints and click-to-jump".
+        public InstanceID TargetInstance;
     }
 
     /// <summary>
@@ -249,6 +282,12 @@ namespace CityAdvisor
         public override string GetText() => _finding.DetailMessage;
 
         public override uint GetSenderID() => 0u;
+
+        // Read by ChirpClickPatch (Harmony) to redirect the chirp's
+        // click-to-jump target from vanilla's Citizen-only behavior to the
+        // finding's actual location.
+        public InstanceID TargetInstance => _finding.TargetInstance;
+        public Vector3 Position => _finding.Position;
     }
 
     /// <summary>
@@ -307,14 +346,13 @@ namespace CityAdvisor
 
                 if (nearestRampDist > InterchangeSearchRadius)
                 {
-                    // Chirper's click-to-jump only supports Citizen target
-                    // IDs (confirmed via ILSpy against ChirpPanel.AddEntry/
-                    // OnTargetClick — objectUserData is hardcoded to
-                    // `new InstanceID { Citizen = message.senderID }`, no
-                    // hook for a NetSegment target), so give a text location
-                    // hint instead. GetDistrictName returns null for
+                    // Text location hint (district name, or compass
+                    // direction fallback) stays even with click-to-jump
+                    // below -- not every player notices/uses the click
+                    // target, and GetDistrictName returning null for
                     // district 0 (the "nothing painted here" sentinel, not
-                    // an error), so this always has a usable fallback.
+                    // an error) is a real, expected case, not defensive
+                    // code for something that can't happen.
                     byte districtId = ctx.DistrictManager.GetDistrict(segmentMid);
                     string districtName = ctx.DistrictManager.GetDistrictName(districtId);
                     string locationHint = LocationDescription.DescribeLocation(
@@ -330,6 +368,12 @@ namespace CityAdvisor
                             $"High traffic density {locationHint} with no highway " +
                             $"interchange within {InterchangeSearchRadius:F0}m " +
                             $"(nearest is {nearestRampDist:F0}m away).",
+                        // Confirmed via ILSpy (InstanceManager.IsValid /
+                        // FollowInstance) that NetSegment is a fully
+                        // supported, followable instance type -- this makes
+                        // ChirpClickPatch's camera jump work the same way
+                        // vanilla's own instance-following does.
+                        TargetInstance = new InstanceID { NetSegment = (ushort)segId },
                     });
                 }
             }

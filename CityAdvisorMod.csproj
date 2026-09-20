@@ -51,4 +51,20 @@
     </Reference>
   </ItemGroup>
 
+  <!--
+    Harmony: CitiesHarmony.API transitively brings its own compile-time
+    Harmony assembly (CitiesHarmony.Harmony). A separate direct
+    Lib.Harmony reference was tried first and rejected: NuGet resolved
+    both, and they defined conflicting duplicate HarmonyLib types (CS0433).
+    CitiesHarmony.API alone is sufficient to compile against HarmonyLib's
+    attributes/Harmony class. At runtime, mods using this pattern share a
+    single copy of Harmony provided by the "Harmony (Mod Dependency)"
+    Workshop item (boformer/CitiesHarmony), e.g. Traffic Manager:
+    President Edition already requires it, rather than each mod bundling
+    its own.
+  -->
+  <ItemGroup>
+    <PackageReference Include="CitiesHarmony.API" Version="2.2.0" />
+  </ItemGroup>
+
 </Project>
