@@ -1,6 +1,7 @@
 using ColossalFramework.UI;
 using HarmonyLib;
 using ICities;
+using UnityEngine;
 
 namespace CityAdvisor
 {
@@ -51,10 +52,22 @@ namespace CityAdvisor
                 if (senderButton != null)
                 {
                     senderButton.objectUserData = finding.TargetInstance;
+                    Debug.Log("[CityAdvisor] ChirpClickPatch: redirected click target to " +
+                              finding.TargetInstance.NetSegment);
+                }
+                else
+                {
+                    Debug.LogWarning("[CityAdvisor] ChirpClickPatch: found the chirp panel " +
+                                      "but no \"Sender\" button inside it -- vanilla UI " +
+                                      "template may have changed.");
                 }
 
-                break;
+                return;
             }
+
+            Debug.LogWarning("[CityAdvisor] ChirpClickPatch: could not find the panel " +
+                              "AddEntry just created for this message -- click target not " +
+                              "redirected, chirp will still show but won't be clickable.");
         }
     }
 }
