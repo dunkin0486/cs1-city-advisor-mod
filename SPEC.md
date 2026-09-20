@@ -81,13 +81,14 @@ segments exists with no highway on/off-ramp within a threshold distance.
 
 CS1 has existing moddable hooks other notification-style mods use:
 
-- `MessageManager` / `ChirpAI` — used by Chirper-replacement mods to inject
-  custom messages into the in-game notification feed. This is the most
-  natural fit — reuses the UI players already look at.
-- TODO: confirm the exact `ChirpAI`/`IChirperMessage` API surface against
-  the installed game version; this is the first thing to prototype once the
-  diagnostic itself produces correct findings, since a working diagnostic
-  with no visible output is hard to validate.
+- `MessageManager.QueueMessage(MessageBase)` — **confirmed via ILSpy and
+  implemented**: this is the entry point mods use to inject a custom chirp
+  into the Chirper feed. A `FindingChirpMessage : MessageBase` wraps each
+  `Finding`, overriding `GetSenderName`/`GetText`/`GetSenderID` (the
+  `ICities.IChirperMessage` surface `MessageBase` implements). `senderID`
+  is `0` — there's no "system sender" concept in `ChirpPanel`, so a chirp
+  with `senderID = 0` just renders with no clickable citizen target, which
+  is correct here, not a placeholder.
 
 ## Compatibility
 
@@ -100,9 +101,8 @@ heavily modded game.
 `NetManager`, `DistrictManager`, and `BuildingManager` buffers doesn't
 require intercepting any game method — just iterating public state. Keep it
 this way as long as possible; every patch is a new compatibility surface.
-The only place a patch might eventually be needed is the notification
-surfacing step (milestone 2), if `ChirpAI`/`MessageManager`'s public API
-doesn't already expose an "inject a custom message" entry point cleanly.
+The notification surfacing step (milestone 2) turned out not to need one
+either — `MessageManager.QueueMessage` is a clean public entry point.
 
 **Defensive diagnostic execution**: each `IDiagnostic.Run()` call is already
 wrapped in try/catch in the scheduler skeleton — keep that. A malformed
@@ -141,15 +141,25 @@ modded setups.
 
 ## Milestones
 
-1. **Diagnostic-only, console logging**: implement the interchange
-   classification + density correlation, log findings to the debug console.
-   No UI yet — validates the graph logic is correct against a real save.
-2. **Wire up notification output**: get one finding appearing as an in-game
-   Chirper-style message.
-3. **Tuning pass**: distance threshold, density threshold, and how
-   "worth caring about" a zone cluster needs to be, all need playtesting
-   against a few different city layouts (small grid city vs. sprawling
-   highway-heavy city will need different defaults).
+1. ~~**Diagnostic-only, console logging**~~ **Done.** Validated against a
+   real 179k-population save (Steam Workshop "Alder City") — the diagnostic
+   correctly fired on real high-density segments, correctly deduped, and
+   correctly picked up a new finding after a highway segment was manually
+   deleted to induce a problem.
+2. ~~**Wire up notification output**~~ **Done.** `FindingChirpMessage` +
+   `MessageManager.QueueMessage` — findings now surface as Chirper messages
+   in-game, not just the debug console. Not yet re-validated in a live game
+   session (needs a game restart to pick up the new build, then a save
+   loaded and time advanced).
+3. **Tuning pass** (in progress): the severity formula was already fixed
+   once — the original `density * (distance / threshold)` saturated to
+   1.00 on every real finding in testing, since real findings were 4-6x
+   past the threshold. Replaced with a saturating
+   `density * (1 - threshold / distance)` factor that discriminates
+   properly. Distance threshold (1500m) and density threshold (0.6) are
+   still untuned defaults — need playtesting against a few different city
+   layouts (small grid city vs. sprawling highway-heavy city will need
+   different defaults).
 4. **Second diagnostic**: once the first one is solid end-to-end, the
    `IDiagnostic` interface should make adding a second (e.g. transit desert,
    zoning imbalance) mostly independent work.

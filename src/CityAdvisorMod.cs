@@ -217,15 +217,38 @@ namespace CityAdvisor
 
         private void Surface(Finding finding)
         {
-            // Milestone 1: console only, to validate diagnostic correctness
-            // before wiring up the in-game notification feed.
             Debug.Log($"[CityAdvisor] {finding.Issue} (severity {finding.Severity:F2}) " +
                       $"at {finding.Position}: {finding.DetailMessage}");
 
-            // TODO milestone 2: replace/augment with a ChirpAI / MessageManager
-            // call so this shows up as an in-game notification. Needs the
-            // exact API surface confirmed against the installed game version.
+            Singleton<MessageManager>.instance.QueueMessage(new FindingChirpMessage(finding));
         }
+    }
+
+    /// <summary>
+    /// Adapts a Finding into the Chirper feed's message type. Confirmed via
+    /// ILSpy against Assembly-CSharp/ICities.dll for the installed version:
+    /// MessageManager.QueueMessage(MessageBase) is the entry point mods use
+    /// to inject a custom chirp; MessageBase implements ICities'
+    /// IChirperMessage and exposes senderName/text/senderID via the
+    /// GetSenderName/GetText/GetSenderID overrides below. senderID 0 renders
+    /// as a chirp with no clickable citizen target (ChirpPanel treats it as
+    /// an invalid InstanceID and no-ops on click) — there's no "system"
+    /// sender concept, so 0 is the correct choice here, not a placeholder.
+    /// </summary>
+    public class FindingChirpMessage : MessageBase
+    {
+        private readonly Finding _finding;
+
+        public FindingChirpMessage(Finding finding)
+        {
+            _finding = finding;
+        }
+
+        public override string GetSenderName() => "City Advisor";
+
+        public override string GetText() => _finding.DetailMessage;
+
+        public override uint GetSenderID() => 0u;
     }
 
     /// <summary>
@@ -284,11 +307,21 @@ namespace CityAdvisor
 
                 if (nearestRampDist > InterchangeSearchRadius)
                 {
+                    // Saturating distance factor: 0 right at the threshold,
+                    // asymptotically approaching (never quite reaching) 1 as
+                    // distance grows — as opposed to a plain
+                    // (distance / threshold) ratio, which exceeds 1 almost
+                    // immediately past the threshold on any real save and
+                    // makes Clamp01 flatten every finding to the same
+                    // severity (confirmed on a 179k-pop test city, where
+                    // every real finding was 4-6x past the threshold and
+                    // all came out as severity 1.00).
+                    float distanceFactor = 1f - (InterchangeSearchRadius / nearestRampDist);
                     findings.Add(new Finding
                     {
                         Issue = "missing_interchange",
                         Position = segmentMid,
-                        Severity = Mathf.Clamp01(density * (nearestRampDist / InterchangeSearchRadius)),
+                        Severity = Mathf.Clamp01(density * distanceFactor),
                         DetailMessage =
                             $"High traffic density with no highway interchange within " +
                             $"{InterchangeSearchRadius:F0}m (nearest is {nearestRampDist:F0}m away).",
