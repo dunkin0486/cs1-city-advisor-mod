@@ -99,6 +99,8 @@ namespace CityAdvisor
                 {
                     new Harmony(HarmonyId).PatchAll(typeof(CityAdvisorMod).Assembly);
                     Debug.Log("[CityAdvisor] Harmony patches applied successfully.");
+                    LogPatchOwners(typeof(ChirpPanel), "AddEntry");
+                    LogPatchOwners(typeof(ChirpPanel), "OnTargetClick");
                 }
                 catch (Exception e)
                 {
@@ -118,6 +120,54 @@ namespace CityAdvisor
             if (HarmonyHelper.IsHarmonyInstalled)
             {
                 new Harmony(HarmonyId).UnpatchAll(HarmonyId);
+            }
+        }
+
+        // Diagnostic only: click-to-jump was confirmed (via our own click
+        // logging) to have every precondition correct -- objectUserData is
+        // a valid, followable NetSegment InstanceID at click time -- yet
+        // the camera doesn't move. One real remaining possibility: another
+        // installed mod also patches ChirpPanel.OnTargetClick, and if any
+        // of its prefixes returns false, Harmony skips the original method
+        // (and its SetTarget call) for everyone, even though our own
+        // non-skipping prefix still runs and logs fine. This lists every
+        // patch actually registered on a method, by owner id, so a
+        // conflicting mod would show up directly instead of more guessing.
+        private static void LogPatchOwners(Type type, string methodName)
+        {
+            MethodInfo method = type.GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if (method == null)
+            {
+                Debug.LogWarning($"[CityAdvisor] LogPatchOwners: could not find {type.Name}.{methodName}");
+                return;
+            }
+
+            var patches = Harmony.GetPatchInfo(method);
+            if (patches == null)
+            {
+                Debug.Log($"[CityAdvisor] {type.Name}.{methodName}: no patches registered by anyone.");
+                return;
+            }
+
+            foreach (var prefix in patches.Prefixes)
+            {
+                bool skipsOriginal = prefix.PatchMethod.ReturnType == typeof(bool);
+                Debug.Log($"[CityAdvisor] {type.Name}.{methodName} PREFIX owner={prefix.owner} " +
+                          $"priority={prefix.priority} returnsBool={skipsOriginal} " +
+                          "(returnsBool=true means this owner's prefix COULD skip the " +
+                          "original method for everyone, including our own patches, if it " +
+                          "returns false at runtime)");
+            }
+            foreach (var postfix in patches.Postfixes)
+            {
+                Debug.Log($"[CityAdvisor] {type.Name}.{methodName} POSTFIX owner={postfix.owner} " +
+                          $"priority={postfix.priority}");
+            }
+            foreach (var transpiler in patches.Transpilers)
+            {
+                Debug.Log($"[CityAdvisor] {type.Name}.{methodName} TRANSPILER owner={transpiler.owner} " +
+                          "(rewrites the method body directly -- can change behavior in ways " +
+                          "not visible from prefix/postfix lists alone)");
             }
         }
     }
