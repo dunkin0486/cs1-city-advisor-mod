@@ -92,9 +92,24 @@ namespace CityAdvisor
 
         public void OnEnabled()
         {
+            Debug.Log("[CityAdvisor] OnEnabled called, waiting on Harmony...");
             HarmonyHelper.DoOnHarmonyReady(() =>
             {
-                new Harmony(HarmonyId).PatchAll(typeof(CityAdvisorMod).Assembly);
+                try
+                {
+                    new Harmony(HarmonyId).PatchAll(typeof(CityAdvisorMod).Assembly);
+                    Debug.Log("[CityAdvisor] Harmony patches applied successfully.");
+                }
+                catch (Exception e)
+                {
+                    // Harmony patch failures (e.g. a game update changing
+                    // ChirpPanel.AddEntry's shape) must not be silent --
+                    // the rest of the mod (diagnostics, Chirper messages,
+                    // text location hints) works fine without this patch,
+                    // so log and continue rather than let an uncaught
+                    // exception here look like it broke the whole mod.
+                    Debug.LogError($"[CityAdvisor] Harmony patch failed, click-to-jump will not work: {e}");
+                }
             });
         }
 
