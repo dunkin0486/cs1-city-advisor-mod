@@ -307,6 +307,19 @@ namespace CityAdvisor
 
                 if (nearestRampDist > InterchangeSearchRadius)
                 {
+                    // Chirper's click-to-jump only supports Citizen target
+                    // IDs (confirmed via ILSpy against ChirpPanel.AddEntry/
+                    // OnTargetClick — objectUserData is hardcoded to
+                    // `new InstanceID { Citizen = message.senderID }`, no
+                    // hook for a NetSegment target), so give a text location
+                    // hint instead. GetDistrictName returns null for
+                    // district 0 (the "nothing painted here" sentinel, not
+                    // an error), so this always has a usable fallback.
+                    byte districtId = ctx.DistrictManager.GetDistrict(segmentMid);
+                    string districtName = ctx.DistrictManager.GetDistrictName(districtId);
+                    string locationHint = LocationDescription.DescribeLocation(
+                        districtName, segmentMid.x, segmentMid.z);
+
                     findings.Add(new Finding
                     {
                         Issue = "missing_interchange",
@@ -314,8 +327,9 @@ namespace CityAdvisor
                         Severity = MissingInterchangeScoring.CalculateSeverity(
                             density, nearestRampDist, InterchangeSearchRadius),
                         DetailMessage =
-                            $"High traffic density with no highway interchange within " +
-                            $"{InterchangeSearchRadius:F0}m (nearest is {nearestRampDist:F0}m away).",
+                            $"High traffic density {locationHint} with no highway " +
+                            $"interchange within {InterchangeSearchRadius:F0}m " +
+                            $"(nearest is {nearestRampDist:F0}m away).",
                     });
                 }
             }
