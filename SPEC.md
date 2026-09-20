@@ -1,0 +1,161 @@
+# City Advisor Mod — Design Spec
+
+## Problem
+
+Vanilla advisors report aggregate thresholds ("traffic flow is low") without
+diagnosing *why*. Players have to manually inspect the map to find the
+actual cause (e.g. missing highway interchange, transit desert, zoning
+imbalance).
+
+## Goal
+
+A rule-based diagnostic engine that walks the city's simulation state
+periodically and fires specific, actionable messages — starting with one
+diagnostic end-to-end, then expanding the library.
+
+**No LLM involved in the diagnosis itself.** The detection logic is
+deterministic graph/geometry queries against exact sim data. An LLM-based
+phrasing layer is a possible future add-on, purely for varying the wording
+of an already-correct diagnosis, and is out of scope for v1.
+
+## First diagnostic: missing highway interchange
+
+**Fires when**: a cluster of high-density, high-traffic-density road
+segments exists with no highway on/off-ramp within a threshold distance.
+
+**Data needed**:
+
+- Highway segment identification: classify by `NetInfo` — highway pieces
+  are identifiable by `NetInfo.m_class` / prefab name (contains "Highway").
+  TODO: confirm exact class values against decompiled `ItemClass.SubService`
+  enum for the installed game version.
+- Interchange/ramp node detection: a node is an interchange point if it has
+  at least one highway-classified segment AND at least one non-highway
+  segment attached. Walk `NetManager.instance.m_nodes.m_buffer`, for each
+  node inspect its `m_segment0..m_segment7` (or the segment array,
+  field naming may differ by version) and classify each attached segment.
+- Density signal: `NetSegment.m_trafficDensity`, same as the overlay mod.
+  If the Traffic Flow Overlay mod's flow-ratio data is available (soft
+  dependency, not required), prefer requiring high density AND low flow
+  ratio together — cuts false positives vs. density alone.
+- Zone density: `DistrictManager` / `ZoneBlock` buffer, or simpler for v1:
+  building `m_level` and zone type via `BuildingManager`, to find
+  residential/commercial clusters worth caring about (skip diagnosing empty
+  zoned land).
+
+**Fires**:
+
+```json
+{
+  "issue": "missing_interchange",
+  "segmentId": "<worst offending segment>",
+  "position": "(x, y, z)",
+  "nearestRampDistance": "<meters>",
+  "severity": "<0..1, derived from density + distance>"
+}
+```
+
+## Architecture
+
+- `IUserMod` entry point (mod metadata only).
+- `LoadingExtensionBase` to know when `NetManager`/`DistrictManager` etc.
+  are valid, and to start/stop the periodic diagnostic pass.
+- Diagnostic pass runs on a slow timer — **every N in-game days**, not every
+  frame or even every few seconds. This is a full-map graph walk; it should
+  feel more like "the city runs an audit periodically" than a live overlay.
+  Use `SimulationManager.instance.m_currentGameTime` to gate this rather
+  than a frame counter, so the cadence is consistent regardless of game
+  speed.
+- Each diagnostic is its own class implementing a shared `IDiagnostic`
+  interface (`Run(DiagnosticContext ctx) -> List<Finding>`), so adding more
+  diagnostics later doesn't mean touching the scheduler.
+- Findings get deduplicated/throttled — don't re-fire the same finding every
+  pass if nothing has changed and the player hasn't acted on it yet. Track a
+  simple "already reported, not yet resolved" set keyed by location.
+
+## Surfacing findings
+
+CS1 has existing moddable hooks other notification-style mods use:
+
+- `MessageManager` / `ChirpAI` — used by Chirper-replacement mods to inject
+  custom messages into the in-game notification feed. This is the most
+  natural fit — reuses the UI players already look at.
+- TODO: confirm the exact `ChirpAI`/`IChirperMessage` API surface against
+  the installed game version; this is the first thing to prototype once the
+  diagnostic itself produces correct findings, since a working diagnostic
+  with no visible output is hard to validate.
+
+## Compatibility
+
+This mod is lower-risk than the overlay mod — it's a read-only diagnostic
+pass with no Harmony patches strictly required for v1 — but compatibility
+still needs explicit handling, especially since the target audience runs a
+heavily modded game.
+
+**No Harmony patches needed for the core diagnostic.** Reading
+`NetManager`, `DistrictManager`, and `BuildingManager` buffers doesn't
+require intercepting any game method — just iterating public state. Keep it
+this way as long as possible; every patch is a new compatibility surface.
+The only place a patch might eventually be needed is the notification
+surfacing step (milestone 2), if `ChirpAI`/`MessageManager`'s public API
+doesn't already expose an "inject a custom message" entry point cleanly.
+
+**Defensive diagnostic execution**: each `IDiagnostic.Run()` call is already
+wrapped in try/catch in the scheduler skeleton — keep that. A malformed
+diagnostic (e.g. one that breaks against a modded road pack with unusual
+`NetInfo` naming) should log and skip, not take down the whole advisor or
+the other diagnostics in the same pass.
+
+**Road pack compatibility for highway classification**: the
+`IsHighwaySegment` name-based check (`info.name.Contains("Highway")`) is a
+real risk with a heavily modded game — packs like Network Extensions 2 or
+CSUR introduce road types that may not follow vanilla naming, and some
+custom highway-style roads may not be classified as highway by name at all.
+Classifying by `ItemClass.SubService` (the vanilla mechanism roads
+themselves use to declare "I'm a highway") will be more robust than string
+matching once confirmed against the decompiled enum — treat the current
+name check as a placeholder to replace, not a shortcut to keep.
+
+**Soft dependency on the Traffic Flow Overlay mod**: don't hard-reference
+its assembly. Detect it at runtime via `PluginManager.instance.GetPluginsInfo()`,
+matching on a known assembly/mod name, and only attempt to read its
+`FlowRatio` data (via reflection, not a direct type reference) if present.
+If it's absent, fall back to density-only detection — degrade gracefully,
+don't require it.
+
+**Mods that change simulation behavior**: "Real Time"/"Real Population" and
+similar mods materially change what normal density and building occupancy
+look like over a day/week. Since this mod's diagnostics fire on a weekly
+in-game cadence rather than live, this matters less for flicker/noise but
+still affects threshold tuning — plan on thresholds being settings-UI-
+configurable rather than hardcoded once past the first working diagnostic.
+
+**Load order**: this mod doesn't need to load before or after any specific
+mod for its core diagnostic to work, since it's pure read-after-the-fact
+analysis on a timer, not something hooking a specific simulation step. Note
+this explicitly in the Workshop description once published — "no load
+order requirements" is a real selling point for a mod aimed at heavily
+modded setups.
+
+## Milestones
+
+1. **Diagnostic-only, console logging**: implement the interchange
+   classification + density correlation, log findings to the debug console.
+   No UI yet — validates the graph logic is correct against a real save.
+2. **Wire up notification output**: get one finding appearing as an in-game
+   Chirper-style message.
+3. **Tuning pass**: distance threshold, density threshold, and how
+   "worth caring about" a zone cluster needs to be, all need playtesting
+   against a few different city layouts (small grid city vs. sprawling
+   highway-heavy city will need different defaults).
+4. **Second diagnostic**: once the first one is solid end-to-end, the
+   `IDiagnostic` interface should make adding a second (e.g. transit desert,
+   zoning imbalance) mostly independent work.
+
+## Non-goals for v1
+
+- No LLM phrasing layer (see Problem section).
+- No settings UI for diagnostic thresholds yet.
+- No cross-save persistence of "already reported" findings — in-memory for
+  the current session is fine to start.
+- No auto-fix / auto-build suggestions beyond the text message itself.
