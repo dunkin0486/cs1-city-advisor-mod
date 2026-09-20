@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net35</TargetFramework>
+    <AssemblyName>CityAdvisorMod</AssemblyName>
+    <RootNamespace>CityAdvisor</RootNamespace>
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+
+    <!--
+      Path to the game's Managed assemblies folder, needed to compile
+      against ICities/ColossalFramework/Assembly-CSharp. Override by setting
+      the CS1_MANAGED_PATH environment variable rather than editing this
+      file, since the correct path is machine-specific. See README.md.
+    -->
+    <CS1ManagedPath Condition="'$(CS1_MANAGED_PATH)' != ''">$(CS1_MANAGED_PATH)</CS1ManagedPath>
+    <CS1ManagedPath Condition="'$(CS1ManagedPath)' == '' AND '$(OS)' != 'Windows_NT'">$(HOME)/Library/Application Support/Steam/steamapps/common/Cities_Skylines/Cities.app/Contents/Resources/Data/Managed</CS1ManagedPath>
+    <CS1ManagedPath Condition="'$(CS1ManagedPath)' == '' AND '$(OS)' == 'Windows_NT'">C:\Program Files (x86)\Steam\steamapps\common\Cities_Skylines\Cities_Data\Managed</CS1ManagedPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="bin/**" />
+    <Compile Remove="obj/**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="ICities">
+      <HintPath>$(CS1ManagedPath)/ICities.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ColossalManaged">
+      <HintPath>$(CS1ManagedPath)/ColossalManaged.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(CS1ManagedPath)/Assembly-CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(CS1ManagedPath)/UnityEngine.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>
