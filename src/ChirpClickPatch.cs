@@ -72,76 +72,71 @@ namespace CityAdvisor
     }
 
     /// <summary>
-    /// Pure logging Prefix on OnTargetClick -- does not affect vanilla
-    /// behavior (a void-returning Harmony Prefix always lets the original
-    /// method run afterward). Added because a live test showed our
-    /// redirected NetSegment InstanceID gets set correctly (confirmed via
-    /// ChirpClickPatch's own log line) but clicking the chirp still does
-    /// nothing, while an unrelated vanilla citizen chirp at the same
-    /// far-map-edge location worked fine -- ruling out a general
-    /// large-map/GameAreaManager clamping issue (also independently
-    /// confirmed false via ILSpy: InstanceManager.IsValid/FollowInstance/
-    /// GetPosition all fully support NetSegment). This logs exactly what
-    /// OnTargetClick sees at the moment of the click, to find where in the
-    /// remaining chain (objectUserData integrity, IsValid, or something in
-    /// SetTarget/FollowTarget itself) this actually breaks.
+    /// Bypasses vanilla's owned-area camera clamp for our own click
+    /// targets only.
+    ///
+    /// Root cause, found via a live-logged Prefix+Postfix directly on
+    /// CameraController.SetTarget (see git history for the debug patches
+    /// used to find this): SetTarget was being called correctly with a
+    /// fully valid NetSegment InstanceID, genuinely different from the
+    /// current target -- but immediately reverted m_targetInstance back to
+    /// empty and m_targetPosition back to wherever the camera already was.
+    /// That's SetTarget's own ClampPoint branch: it clamps the target
+    /// position into GameAreaManager's recognized "owned" tile grid, and
+    /// if the clamp changes the position, clears the target entirely. Our
+    /// findings sit on tiles the 81 Tiles mod lets you build on, but that
+    /// vanilla's own camera-bounds check apparently doesn't recognize as
+    /// owned -- a partial-compatibility gap between 81 Tiles and vanilla's
+    /// camera system, not a bug in our redirect (which was independently
+    /// confirmed correct: valid, followable, genuinely-changed target).
+    ///
+    /// CameraController.m_unlimitedCamera skips that clamp entirely when
+    /// true. Both it and ToolsModifierControl.cameraController are public
+    /// fields (confirmed via ILSpy), so this needs no Harmony field
+    /// injection -- just toggle it on immediately before vanilla's
+    /// OnTargetClick runs (Prefix) and restore its original value right
+    /// after (Postfix), scoped to only our own message's click so vanilla
+    /// navigation elsewhere keeps its normal bounds behavior.
     /// </summary>
     [HarmonyPatch(typeof(ChirpPanel), "OnTargetClick")]
-    public static class ChirpClickDebugPatch
+    public static class ChirpClickCameraBoundsPatch
     {
+        private static bool _previousUnlimitedCamera;
+        private static bool _shouldRestore;
+
         internal static void Prefix(UIComponent comp, UIMouseEventParameter p)
         {
-            if (p?.source == null)
+            _shouldRestore = false;
+
+            if (!(p?.source?.objectUserData is InstanceID id) || id.Type != InstanceType.NetSegment)
             {
-                Debug.Log("[CityAdvisor] OnTargetClick: p.source is null, vanilla will no-op.");
                 return;
             }
 
-            object raw = p.source.objectUserData;
-            if (raw is InstanceID id)
+            CameraController controller = ToolsModifierControl.cameraController;
+            if (controller == null)
             {
-                Debug.Log($"[CityAdvisor] OnTargetClick: objectUserData is InstanceID " +
-                          $"type={id.Type} netSegment={id.NetSegment} " +
-                          $"isEmpty={id.IsEmpty} isValid={InstanceManager.IsValid(id)}");
+                return;
             }
-            else
-            {
-                Debug.Log("[CityAdvisor] OnTargetClick: objectUserData is NOT an InstanceID, " +
-                          $"actual type={raw?.GetType().FullName ?? "null"}");
-            }
-        }
-    }
 
-    /// <summary>
-    /// Pure logging Prefix+Postfix on CameraController.SetTarget itself --
-    /// added after ruling out every other layer: no other mod patches
-    /// AddEntry/OnTargetClick (confirmed via Harmony.GetPatchInfo), and a
-    /// live test showed OnTargetClick received a fully valid, followable
-    /// NetSegment InstanceID for a genuine target change (not a same-
-    /// target no-op) yet the camera didn't move at all. This directly
-    /// observes whether SetTarget is even invoked with our data, and
-    /// whether its private state (m_targetInstance/m_targetPosition/
-    /// m_targetSize) actually changes afterward -- narrowing "SetTarget
-    /// silently no-ops for this id" from "rendering doesn't reflect an
-    /// applied state change" (two very different bugs to chase).
-    /// ___ fields bind to CameraController's private fields by Harmony's
-    /// naming convention.
-    /// </summary>
-    [HarmonyPatch(typeof(CameraController), "SetTarget")]
-    public static class SetTargetDebugPatch
-    {
-        internal static void Prefix(InstanceID id, Vector3 position, bool zoomIn, InstanceID ___m_targetInstance)
-        {
-            Debug.Log($"[CityAdvisor] SetTarget CALLED: id.Type={id.Type} id.NetSegment={id.NetSegment} " +
-                      $"position={position} zoomIn={zoomIn} currentTarget.Type={___m_targetInstance.Type} " +
-                      $"sameAsCurrentTarget={id == ___m_targetInstance}");
+            _previousUnlimitedCamera = controller.m_unlimitedCamera;
+            controller.m_unlimitedCamera = true;
+            _shouldRestore = true;
         }
 
-        internal static void Postfix(InstanceID ___m_targetInstance, Vector3 ___m_targetPosition, float ___m_targetSize)
+        internal static void Postfix()
         {
-            Debug.Log($"[CityAdvisor] SetTarget AFTER: m_targetInstance.Type={___m_targetInstance.Type} " +
-                      $"netSegment={___m_targetInstance.NetSegment} m_targetPosition={___m_targetPosition} " +
-                      $"m_targetSize={___m_targetSize}");
+            if (!_shouldRestore)
+            {
+                return;
+            }
+
+            CameraController controller = ToolsModifierControl.cameraController;
+            if (controller != null)
+            {
+                controller.m_unlimitedCamera = _previousUnlimitedCamera;
+            }
+            _shouldRestore = false;
         }
     }
 }

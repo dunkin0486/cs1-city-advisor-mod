@@ -119,6 +119,33 @@ overwrites the button's `objectUserData` with a `NetSegment`-tagged
 Citizen/Building/etc. target. See "Harmony" below for why this was
 initially deferred and what changed.
 
+**Second bug, found only by live testing, not decompilation alone:** the
+redirect above was necessary but not sufficient. A live test with debug
+logging directly on `CameraController.SetTarget` (Prefix+Postfix reading
+its private fields via Harmony's `___field` binding — see git history,
+since removed once the root cause was found) showed `SetTarget` was being
+called correctly with a valid, genuinely-different `NetSegment` target,
+but immediately reverted `m_targetInstance` back to empty afterward. Root
+cause: `SetTarget`'s own `GameAreaManager.ClampPoint` branch clamps the
+target position into vanilla's recognized "owned" tile grid, and clears
+the target entirely if clamping changes the position. This city uses the
+81 Tiles mod, and our findings — by design, since the diagnostic hunts for
+segments far from any highway interchange — tend to land on tiles 81
+Tiles lets you build on but that vanilla's own camera-bounds check
+apparently doesn't recognize as owned. (An earlier live test seemed to
+rule this out: clicking a *different*, unrelated citizen chirp near the
+same map region worked fine. That test wasn't actually equivalent — a
+citizen's position when clicked is wherever they currently are, not
+necessarily wherever the chirp's subject matter referenced.)
+
+Fix: `ChirpClickCameraBoundsPatch` (also on `OnTargetClick`) temporarily
+sets `CameraController.m_unlimitedCamera = true` — a public field,
+confirmed via ILSpy, that skips the `ClampPoint` branch entirely — only
+while handling a click on one of our `NetSegment`-targeted messages, and
+restores its original value immediately after in a Postfix. Scoped this
+narrowly (not left on globally) so vanilla's own camera bounds still apply
+to everything else.
+
 ## Compatibility
 
 This mod's core diagnostic is still a read-only pass with no Harmony
