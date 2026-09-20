@@ -43,7 +43,17 @@
 
 ## Testing changes
 
-There's no automated test suite yet — diagnostic logic is verified by
-running against a real save and checking the console log (`[CityAdvisor]
-...` lines) for milestone 1. Note in your PR description which save/city
-layout you tested against and what you saw logged.
+`tests/CityAdvisor.Tests.csproj` covers game-independent pure logic (e.g.
+`MissingInterchangeScoring`) — run it with `dotnet test tests/`. It has
+zero dependency on the CS1 game assemblies by design, since CI (and
+anyone without a licensed game install) can't build against them. This
+runs automatically on every PR via `.github/workflows/test.yml`.
+
+That intentionally doesn't cover the actual `NetManager`/`DistrictManager`
+graph-walking logic, which still depends on real game state. Verify that
+by running against a real save and checking the console log or Chirper
+feed for `[CityAdvisor] ...` output. Note in your PR description which
+save/city layout you tested against and what you saw. When adding new
+pure logic (scoring, thresholds, key-building, anything not touching game
+types directly), pull it into its own file like
+`src/MissingInterchangeScoring.cs` so it can be unit tested the same way.

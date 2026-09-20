@@ -23,6 +23,13 @@
   <ItemGroup>
     <Compile Remove="bin/**" />
     <Compile Remove="obj/**" />
+    <!--
+      tests/ is its own project (CityAdvisor.Tests.csproj) that links in
+      individual game-independent source files by path, so exclude it here:
+      this project's default **/*.cs globbing would otherwise also try to
+      compile xunit test files against a project with no xunit reference.
+    -->
+    <Compile Remove="tests/**" />
   </ItemGroup>
 
   <ItemGroup>
